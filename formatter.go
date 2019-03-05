@@ -37,6 +37,8 @@ const defaultTimestampFormat = time.RFC3339
 
 // Format renders a single log entry
 func (f *textFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	var isColored bool
+
 	prefixFieldClashes(entry.Data)
 
 	keys := make([]string, 0, len(entry.Data))
@@ -55,12 +57,17 @@ func (f *textFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 
 	f.Do(func() { f.init(entry) })
 
-	isColored := (f.ForceColors || f.isTerminal)
+	if runtime.GOOS == "windows" {
+		isColored = f.isTerminal
+	} else {
+		isColored = (f.ForceColors || f.isTerminal)
+	}
 
 	if isColored {
 		f.printColored(b, entry, keys)
 	} else {
 		f.appendKeyValue(b, "level", entry.Level.String())
+		f.appendKeyValue(b, "time", entry.Time.Format(defaultTimestampFormat))
 		if entry.Message != "" {
 			f.appendKeyValue(b, "msg", entry.Message)
 		}
@@ -69,11 +76,18 @@ func (f *textFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		}
 	}
 
+	if runtime.GOOS == "windows" {
+		b.WriteByte('\r')
+	}
+
 	b.WriteByte('\n')
 	return b.Bytes(), nil
 }
 
 func (f *textFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys []string) {
+	var prefixColor string
+	var suffixColor string
+
 	var levelColor int
 	switch entry.Level {
 	case logrus.DebugLevel:
@@ -88,7 +102,15 @@ func (f *textFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 
 	levelText := strings.ToUpper(entry.Level.String())[0:4]
 
-	fmt.Fprintf(b, "\x1b[%dm%s\x1b[0m[%s]", levelColor, levelText, entry.Time.Format(defaultTimestampFormat))
+	if runtime.GOOS != "windows" {
+		prefixColor = fmt.Sprintf("\x1b[%dm", levelColor)
+		suffixColor = fmt.Sprintf("\x1b[0m")
+	} else {
+		prefixColor = fmt.Sprintf("")
+		suffixColor = fmt.Sprintf("")
+	}
+
+	fmt.Fprintf(b, "%s%s%s [%s]", prefixColor, levelText, suffixColor, entry.Time.Format(defaultTimestampFormat))
 
 	if entry.Message != "" {
 		fmt.Fprintf(b, " %s", entry.Message)
@@ -96,7 +118,7 @@ func (f *textFormatter) printColored(b *bytes.Buffer, entry *logrus.Entry, keys 
 
 	for _, k := range keys {
 		v := entry.Data[k]
-		fmt.Fprintf(b, " \x1b[%dm%s\x1b[0m=", levelColor, k)
+		fmt.Fprintf(b, " %s%s%s=", prefixColor, k, suffixColor)
 		f.appendValue(b, v)
 	}
 }
@@ -118,7 +140,7 @@ func (f *textFormatter) needsQuoting(text string) bool {
 
 func (f *textFormatter) appendKeyValue(b *bytes.Buffer, key string, value interface{}) {
 	if b.Len() > 0 {
-		b.WriteByte(' ')
+		b.WriteByte('\t')
 	}
 	b.WriteString(key)
 	b.WriteByte('=')
